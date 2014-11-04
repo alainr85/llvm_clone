@@ -200,6 +200,7 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool parseSetNoDspDirective();
   bool parseSetReorderDirective();
   bool parseSetNoReorderDirective();
+  bool parseSetMips16Directive();
   bool parseSetNoMips16Directive();
   bool parseSetFpDirective();
   bool parseSetPopDirective();
@@ -220,6 +221,8 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool eatComma(StringRef ErrorStr);
 
   int matchCPURegisterName(StringRef Symbol);
+
+  int matchHWRegsRegisterName(StringRef Symbol);
 
   int matchRegisterByNumber(unsigned RegNum, unsigned RegClass);
 
@@ -856,6 +859,14 @@ public:
   createFGRReg(unsigned Index, const MCRegisterInfo *RegInfo, SMLoc S, SMLoc E,
                MipsAsmParser &Parser) {
     return CreateReg(Index, RegKind_FGR, RegInfo, S, E, Parser);
+  }
+
+  /// Create a register that is definitely a HWReg.
+  /// This is typically only used for named registers such as $hwr_cpunum.
+  static std::unique_ptr<MipsOperand>
+  createHWRegsReg(unsigned Index, const MCRegisterInfo *RegInfo,
+                  SMLoc S, SMLoc E, MipsAsmParser &Parser) {
+    return CreateReg(Index, RegKind_HWRegs, RegInfo, S, E, Parser);
   }
 
   /// Create a register that is definitely an FCC.
@@ -1794,6 +1805,20 @@ int MipsAsmParser::matchCPURegisterName(StringRef Name) {
   return CC;
 }
 
+int MipsAsmParser::matchHWRegsRegisterName(StringRef Name) {
+  int CC;
+
+  CC = StringSwitch<unsigned>(Name)
+           .Case("hwr_cpunum", 0)
+           .Case("hwr_synci_step", 1)
+           .Case("hwr_cc", 2)
+           .Case("hwr_ccres", 3)
+           .Case("hwr_ulr", 29)
+           .Default(-1);
+
+  return CC;
+}
+
 int MipsAsmParser::matchFPURegisterName(StringRef Name) {
 
   if (Name[0] == 'f') {
@@ -2273,6 +2298,13 @@ MipsAsmParser::matchAnyRegisterNameWithoutDollar(OperandVector &Operands,
   int Index = matchCPURegisterName(Identifier);
   if (Index != -1) {
     Operands.push_back(MipsOperand::createGPRReg(
+        Index, getContext().getRegisterInfo(), S, getLexer().getLoc(), *this));
+    return MatchOperand_Success;
+  }
+
+  Index = matchHWRegsRegisterName(Identifier);
+  if (Index != -1) {
+    Operands.push_back(MipsOperand::createHWRegsReg(
         Index, getContext().getRegisterInfo(), S, getLexer().getLoc(), *this));
     return MatchOperand_Success;
   }
@@ -2783,14 +2815,32 @@ bool MipsAsmParser::parseSetNoDspDirective() {
   return false;
 }
 
-bool MipsAsmParser::parseSetNoMips16Directive() {
-  Parser.Lex();
+bool MipsAsmParser::parseSetMips16Directive() {
+  Parser.Lex(); // Eat "mips16".
+
   // If this is not the end of the statement, report an error.
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     reportParseError("unexpected token, expected end of statement");
     return false;
   }
-  // For now do nothing.
+
+  setFeatureBits(Mips::FeatureMips16, "mips16");
+  getTargetStreamer().emitDirectiveSetMips16();
+  Parser.Lex(); // Consume the EndOfStatement.
+  return false;
+}
+
+bool MipsAsmParser::parseSetNoMips16Directive() {
+  Parser.Lex(); // Eat "nomips16".
+
+  // If this is not the end of the statement, report an error.
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    reportParseError("unexpected token, expected end of statement");
+    return false;
+  }
+
+  clearFeatureBits(Mips::FeatureMips16, "mips16");
+  getTargetStreamer().emitDirectiveSetNoMips16();
   Parser.Lex(); // Consume the EndOfStatement.
   return false;
 }
@@ -2939,9 +2989,6 @@ bool MipsAsmParser::parseSetFeature(uint64_t Feature) {
     break;
   case Mips::FeatureMicroMips:
     getTargetStreamer().emitDirectiveSetMicroMips();
-    break;
-  case Mips::FeatureMips16:
-    getTargetStreamer().emitDirectiveSetMips16();
     break;
   case Mips::FeatureMips1:
     selectArch("mips1");
@@ -3131,7 +3178,7 @@ bool MipsAsmParser::parseDirectiveSet() {
   } else if (Tok.getString() == "nomacro") {
     return parseSetNoMacroDirective();
   } else if (Tok.getString() == "mips16") {
-    return parseSetFeature(Mips::FeatureMips16);
+    return parseSetMips16Directive();
   } else if (Tok.getString() == "nomips16") {
     return parseSetNoMips16Directive();
   } else if (Tok.getString() == "nomicromips") {
