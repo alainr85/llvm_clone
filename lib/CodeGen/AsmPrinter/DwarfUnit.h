@@ -55,7 +55,8 @@ private:
   SmallVector<RangeSpan, 2> Ranges;
 
 public:
-  RangeSpanList(MCSymbol *Sym) : RangeSym(Sym) {}
+  RangeSpanList(MCSymbol *Sym, SmallVector<RangeSpan, 2> Ranges)
+      : RangeSym(Sym), Ranges(std::move(Ranges)) {}
   MCSymbol *getSym() const { return RangeSym; }
   const SmallVectorImpl<RangeSpan> &getRanges() const { return Ranges; }
   void addRange(RangeSpan Range) { Ranges.push_back(Range); }
@@ -107,9 +108,6 @@ protected:
   /// corresponds to the MDNode mapped with the subprogram DIE.
   DenseMap<DIE *, const MDNode *> ContainingTypeMap;
 
-  // List of ranges for a given compile unit.
-  SmallVector<RangeSpan, 1> CURanges;
-
   // DIEValueAllocator - All DIEValues are allocated through this allocator.
   BumpPtrAllocator DIEValueAllocator;
 
@@ -128,6 +126,8 @@ protected:
   void addLocalString(DIE &Die, dwarf::Attribute Attribute, StringRef Str);
 
   void addIndexedString(DIE &Die, dwarf::Attribute Attribute, StringRef Str);
+
+  bool applySubprogramDefinitionAttributes(DISubprogram SP, DIE &SPDie);
 
 public:
   virtual ~DwarfUnit();
@@ -148,10 +148,6 @@ public:
 
   /// hasContent - Return true if this compile unit has something to write out.
   bool hasContent() const { return !UnitDie.getChildren().empty(); }
-
-  /// getRanges - Get the list of ranges for this unit.
-  const SmallVectorImpl<RangeSpan> &getRanges() const { return CURanges; }
-  SmallVectorImpl<RangeSpan> &getRanges() { return CURanges; }
 
   /// getParentContextString - Get a string containing the language specific
   /// context for a global name.
@@ -284,7 +280,7 @@ public:
   DIE *getOrCreateNameSpace(DINameSpace NS);
 
   /// getOrCreateSubprogramDIE - Create new DIE using SP.
-  DIE *getOrCreateSubprogramDIE(DISubprogram SP);
+  DIE *getOrCreateSubprogramDIE(DISubprogram SP, bool Minimal = false);
 
   void applySubprogramAttributes(DISubprogram SP, DIE &SPDie,
                                  bool Minimal = false);

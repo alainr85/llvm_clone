@@ -52,12 +52,21 @@ class DwarfCompileUnit : public DwarfUnit {
   // the CU itself.
   SmallVector<RangeSpanList, 1> CURangeLists;
 
+  // List of ranges for a given compile unit.
+  SmallVector<RangeSpan, 2> CURanges;
+
+  // The base address of this unit, if any. Used for relative references in
+  // ranges/locs.
+  const MCSymbol *BaseAddress;
+
   /// \brief Construct a DIE for the given DbgVariable without initializing the
   /// DbgVariable's DIE reference.
   std::unique_ptr<DIE> constructVariableDIEImpl(const DbgVariable &DV,
                                                 bool Abstract);
 
   bool isDwoUnit() const override;
+
+  bool includeMinimalInlineScopes() const;
 
 public:
   DwarfCompileUnit(unsigned UID, DICompileUnit Node, AsmPrinter *A,
@@ -114,12 +123,12 @@ public:
 
   /// \brief A helper function to construct a RangeSpanList for a given
   /// lexical scope.
-  void addScopeRangeList(DIE &ScopeDIE,
-                         const SmallVectorImpl<InsnRange> &Range);
+  void addScopeRangeList(DIE &ScopeDIE, SmallVector<RangeSpan, 2> Range);
+
+  void attachRangesOrLowHighPC(DIE &D, SmallVector<RangeSpan, 2> Ranges);
 
   void attachRangesOrLowHighPC(DIE &D,
                                const SmallVectorImpl<InsnRange> &Ranges);
-
   /// \brief This scope represents inlined body of a function. Construct
   /// DIE to represent this concrete inlined copy of the function.
   std::unique_ptr<DIE> constructInlinedScopeDIE(LexicalScope *Scope);
@@ -223,16 +232,17 @@ public:
 
   void applySubprogramAttributesToDefinition(DISubprogram SP, DIE &SPDie);
 
-  /// addRangeList - Add an address range list to the list of range lists.
-  void addRangeList(RangeSpanList Ranges) {
-    CURangeLists.push_back(std::move(Ranges));
-  }
-
   /// getRangeLists - Get the vector of range lists.
   const SmallVectorImpl<RangeSpanList> &getRangeLists() const {
-    return CURangeLists;
+    return (Skeleton ? Skeleton : this)->CURangeLists;
   }
-  SmallVectorImpl<RangeSpanList> &getRangeLists() { return CURangeLists; }
+
+  /// getRanges - Get the list of ranges for this unit.
+  const SmallVectorImpl<RangeSpan> &getRanges() const { return CURanges; }
+  SmallVector<RangeSpan, 2> takeRanges() { return std::move(CURanges); }
+
+  void setBaseAddress(const MCSymbol *Base) { BaseAddress = Base; }
+  const MCSymbol *getBaseAddress() const { return BaseAddress; }
 };
 
 } // end llvm namespace
