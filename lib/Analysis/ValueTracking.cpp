@@ -1005,7 +1005,6 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
       KnownZero <<= ShiftAmt;
       KnownOne  <<= ShiftAmt;
       KnownZero |= APInt::getLowBitsSet(BitWidth, ShiftAmt); // low bits known 0
-      break;
     }
     break;
   case Instruction::LShr:
@@ -1015,12 +1014,11 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
       uint64_t ShiftAmt = SA->getLimitedValue(BitWidth);
 
       // Unsigned shift right.
-      computeKnownBits(I->getOperand(0), KnownZero,KnownOne, TD, Depth+1, Q);
+      computeKnownBits(I->getOperand(0), KnownZero, KnownOne, TD, Depth+1, Q);
       KnownZero = APIntOps::lshr(KnownZero, ShiftAmt);
       KnownOne  = APIntOps::lshr(KnownOne, ShiftAmt);
       // high bits known zero.
       KnownZero |= APInt::getHighBitsSet(BitWidth, ShiftAmt);
-      break;
     }
     break;
   case Instruction::AShr:
@@ -1039,7 +1037,6 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
         KnownZero |= HighBits;
       else if (KnownOne[BitWidth-ShiftAmt-1])  // New bits are known one.
         KnownOne |= HighBits;
-      break;
     }
     break;
   case Instruction::Sub: {
@@ -2549,23 +2546,31 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
   default:
     return true;
   case Instruction::UDiv:
-  case Instruction::URem:
-    // x / y is undefined if y == 0, but calculations like x / 3 are safe.
-    return isKnownNonZero(Inst->getOperand(1), TD);
+  case Instruction::URem: {
+    // x / y is undefined if y == 0.
+    const APInt *V;
+    if (match(Inst->getOperand(1), m_APInt(V)))
+      return *V != 0;
+    return false;
+  }
   case Instruction::SDiv:
   case Instruction::SRem: {
-    Value *Op = Inst->getOperand(1);
-    // x / y is undefined if y == 0
-    if (!isKnownNonZero(Op, TD))
-      return false;
-    // x / y might be undefined if y == -1
-    unsigned BitWidth = getBitWidth(Op->getType(), TD);
-    if (BitWidth == 0)
-      return false;
-    APInt KnownZero(BitWidth, 0);
-    APInt KnownOne(BitWidth, 0);
-    computeKnownBits(Op, KnownZero, KnownOne, TD);
-    return !!KnownZero;
+    // x / y is undefined if y == 0 or x == INT_MIN and y == -1
+    const APInt *X, *Y;
+    if (match(Inst->getOperand(1), m_APInt(Y))) {
+      if (*Y != 0) {
+        if (*Y == -1) {
+          // The numerator can't be MinSignedValue if the denominator is -1.
+          if (match(Inst->getOperand(0), m_APInt(X)))
+            return !Y->isMinSignedValue();
+          // The numerator *might* be MinSignedValue.
+          return false;
+        }
+        // The denominator is not 0 or -1, it's safe to proceed.
+        return true;
+      }
+    }
+    return false;
   }
   case Instruction::Load: {
     const LoadInst *LI = cast<LoadInst>(Inst);
